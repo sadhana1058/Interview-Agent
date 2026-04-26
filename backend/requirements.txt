@@ -1,0 +1,8 @@
+# backend/requirements.txt
+fastapi
+uvicorn
+langchain
+langgraph
+langchain-anthropic
+python-dotenv
+pydantic
