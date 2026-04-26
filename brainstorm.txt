@@ -1,0 +1,56 @@
+What it is
+A voice AI that interviews you. You pick a role and round, hit start, and an AI voice asks you technical questions, listens to your answers, silently scores them, decides whether to probe deeper or move on, and gives you a report at the end. You just talk.
+
+Folder structure
+Two folders. backend/ is Python. frontend/ is React. That's the whole project.
+interview-demo/
+├── backend/
+│   ├── .env          ← your two API keys live here
+│   ├── main.py       ← FastAPI, two endpoints
+│   ├── graph.py      ← LangGraph, the AI brain
+│   └── prompts.py    ← system prompts per role/round
+└── frontend/
+    ├── .env          ← ElevenLabs key for browser
+    └── src/
+        ├── App.jsx          ← page routing
+        ├── SetupPage.jsx    ← role + round picker
+        ├── InterviewPage.jsx ← voice UI + transcript
+        └── ResultsPage.jsx  ← score breakdown
+
+The backend — two endpoints
+POST /start — creates a session ID, initialises the LangGraph state in a Python dict, runs the first graph step which generates the opening question, returns the session ID and question text.
+POST /respond — takes the session ID and the transcript of what you just said, runs the evaluate node then the router node then question_gen if needed, returns either the next question text or an END signal with your scores.
+The sessions dict is just an in-memory Python dict. No database. When you kill the server the session is gone. Fine for a demo.
+
+The LangGraph brain — four nodes
+question_gen — calls Claude with the system prompt and recent conversation history, gets back the next question as plain text. Stops and waits for your answer.
+evaluate — takes your answer and the question, calls Claude with the eval prompt, gets back a JSON score 1–10 and one sentence of feedback.
+router — looks at the score. Below 6, increments nothing and goes back to question_gen which will generate a follow-up probe. 6 or above, increments the topics-done counter. When topics-done hits 4, sets status to end.
+conditional edge — if status is end, graph terminates. If active, goes back to question_gen.
+The whole state is a Python TypedDict with eight fields — question, answer, score, feedback, topics_done, history list, and status. Everything lives in that dict.
+
+The voice layer — ElevenLabs
+The frontend uses the @elevenlabs/react package and its useConversation hook. The hook manages the WebSocket connection, microphone input, voice activity detection (it knows when you stop talking), and audio playback.
+The flow per turn is: ElevenLabs detects you stopped speaking → gives you the transcript text in a callback → your code POSTs that to /respond → gets next question text back → calls conv.sendTextMessage() → ElevenLabs speaks it aloud. That loop is the entire voice integration.
+ElevenLabs is purely the voice layer here. LangGraph is fully in control of what gets said.
+
+The frontend — three screens
+Setup screen — two buttons for role, three buttons for round, two buttons for duration. One big Start button. Hardcoded for demo, no dynamic data fetching.
+Interview screen — shows the AI speaking indicator, a live transcript of the conversation as it builds up, and a thinking indicator while the backend is processing. That's it. No fancy waveform needed for a demo.
+Results screen — shows the average score, then a list of each question with its individual score. Rendered from the history array that /respond sends back on END.
+
+The .env files
+Backend .env has ANTHROPIC_API_KEY and ELEVENLABS_API_KEY. Loaded with python-dotenv at startup.
+Frontend .env has VITE_ELEVENLABS_API_KEY and VITE_BACKEND_URL=http://localhost:8000. Vite exposes VITE_ prefixed vars to the browser automatically.
+The Anthropic key never touches the browser. It stays backend only.
+
+How to run it
+Terminal one: cd backend && uvicorn main:app --reload
+Terminal two: cd frontend && npm run dev
+Open localhost:5173. Done.
+
+How to share it for a demo without deploying
+Run npx localtunnel --port 8000 and npx localtunnel --port 5173. You get two temporary public URLs. Update VITE_BACKEND_URL to the backend tunnel URL, restart Vite, share the frontend tunnel URL. Anyone can hit it from their browser. No deployment, no cloud account.
+
+What it costs to run
+One 30-minute demo session uses roughly 10–15K tokens on Claude Sonnet and about 3–4K characters of ElevenLabs TTS. Total cost per session is around $0.05–0.10. A day of demos costs less than a coffee.
